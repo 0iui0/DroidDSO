@@ -100,6 +100,7 @@ add_library( # Sets the name of the library.
         SHARED
         ${dso_SOURCE_FILES}
         ${dmvio_SOURCE_FILES}
+        DSOSlamSystem.cpp
         dso_jni.cpp
         )
 

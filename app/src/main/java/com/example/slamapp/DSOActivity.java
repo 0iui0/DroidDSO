@@ -163,9 +163,15 @@ public class DSOActivity extends AppCompatActivity implements com.example.slamap
     }
 
     private void start() {
-        DataThread thread = new DataThread("DSO_DataThread");
-        thread.setOSPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
-        thread.start();
+        ImuThread imuThread = new ImuThread("DSO_IMUThread");
+        imuThread.setOSPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
+        imuThread.start();
+        ImgThread imgThread = new ImgThread("DSO_IMUThread");
+        imgThread.setOSPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
+        imgThread.start();
+        PrcThread prcThread = new PrcThread("DSO_IMUThread");
+        prcThread.setOSPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
+        prcThread.start();
     }
 
     @Override
@@ -229,7 +235,6 @@ public class DSOActivity extends AppCompatActivity implements com.example.slamap
             }
         });
     }
-
     private void refreshFrameRate(final int frameIndex) {
         if (System.currentTimeMillis() - mLastUpdateTime < 1000) {
             return;
@@ -247,11 +252,10 @@ public class DSOActivity extends AppCompatActivity implements com.example.slamap
         });
 
     }
-
-    private class DataThread extends Thread {
+    private class ImuThread extends Thread {
         private int mOSPriority = Process.THREAD_PRIORITY_DEFAULT;
 
-        public DataThread(String threadName) {
+        public ImuThread(String threadName) {
             super(threadName);
         }
 
@@ -262,32 +266,50 @@ public class DSOActivity extends AppCompatActivity implements com.example.slamap
         @Override
         public void run() {
             Process.setThreadPriority(mOSPriority);
-            mLastUpdateTime = System.currentTimeMillis();
-
-            int i = 0;
-            String imgDir = "/sdcard/dataset-outdoors3_512_16/dso/cam0/images";
-
-            if (LOCAL_MODE) {
-                File directory = new File(imgDir);
-                File[] files = directory.listFiles();
-                Arrays.sort(files);
-                for (final File file : files) {
-                    if (mStopped)
-                        return;
-                    if (!file.getName().endsWith(".png"))
-                        continue;
-                    TARNativeInterface.dsoOnFrameByPath(imgDir + File.separator + file.getName());
-                    refreshFrameRate(i++);
-                }
-            } else {
-                while (!mStopped) {
-                    byte[] frameData = mVideoSource.getFrame();     // YUV data
-                    if (frameData != null) {
-                        TARNativeInterface.dsoOnFrameByData(com.example.slamapp.Constants.IN_WIDTH, com.example.slamapp.Constants.IN_HEIGHT, frameData, 0);
-                        refreshFrameRate(i++);
-                    }
-                }
+            while (!mStopped) {
+                TARNativeInterface.dsoPushImu();
             }
+
+        }
+    }
+    private class ImgThread extends Thread {
+        private int mOSPriority = Process.THREAD_PRIORITY_DEFAULT;
+
+        public ImgThread(String threadName) {
+            super(threadName);
+        }
+
+        public void setOSPriority(int priority) {
+            mOSPriority = priority;
+        }
+
+        @Override
+        public void run() {
+            Process.setThreadPriority(mOSPriority);
+            while (!mStopped) {
+                TARNativeInterface.dsoPushImage();
+            }
+
+        }
+    }
+    private class PrcThread extends Thread {
+        private int mOSPriority = Process.THREAD_PRIORITY_DEFAULT;
+
+        public PrcThread(String threadName) {
+            super(threadName);
+        }
+
+        public void setOSPriority(int priority) {
+            mOSPriority = priority;
+        }
+
+        @Override
+        public void run() {
+            Process.setThreadPriority(mOSPriority);
+            while (!mStopped) {
+                TARNativeInterface.dsoProcess();
+            }
+
         }
     }
 }

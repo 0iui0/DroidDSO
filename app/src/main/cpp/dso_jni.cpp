@@ -12,203 +12,7 @@
 #include <istream>
 #include <sstream>
 #include <fstream>
-
-#include "IOWrapper/Output3DWrapper.h"
-#include "IOWrapper/ImageDisplay.h"
-#include "IOWrapper/Android/AndroidOutput3DWrapper.h"
-#include "IOWrapper/Android/KeyFrameDisplay.h"
-
-#include "util/settings.h"
-#include "util/globalFuncs.h"
-#include "util/DatasetReader.h"
-#include "util/globalCalib.h"
-#include "util/logger.h"
-
-#include "util/NumType.h"
-#include "FullSystem/FullSystem.h"
-#include "OptimizationBackend/MatrixAccumulators.h"
-#include "FullSystem/PixelSelector2.h"
-#include "util/MinimalImage.h"
-#include <jni.h>
-#include <opencv2/core/mat.hpp>
-#include <opencv2/imgproc.hpp>
-
-// FIXME: remove hard code
-#define IMAGE_DIR "/sdcard/dataset-outdoors3_512_16/dso/cam0/images"
-std::string source = IMAGE_DIR;
-std::string calib = "";
-std::string gammaCalib = "";
-std::string vignette = "";
-std::string gtFile = "";
-std::string imuFile = "";
-int maxPreloadImages = 0; // If set we only preload if there are less images to be loade.
-
-
-double rescale = 1;
-bool reverse = false;
-int start = 0;
-int end = 100000;
-bool prefetch = false;
-float playbackSpeed = 0;    // 0 for linearize (play as fast as possible, while sequentializing tracking & mapping). otherwise, factor on timestamps.
-bool preload = false;
-bool useSampleOutput = false;
-bool use16Bit = false;
-bool linearizeOperation = (playbackSpeed == 0);
-
-using namespace dso;
-dmvio::MainSettings mainSettings;
-dmvio::IMUCalibration imuCalibration;
-dmvio::IMUSettings imuSettings;
-
-class DSOSlamSystem {
-public:
-    DSOSlamSystem() {
-        reader_ = new ImageFolderReader(source, mainSettings.calib, mainSettings.gammaCalib,
-                                        mainSettings.vignette, use16Bit);
-        reader_->loadIMUData(imuFile);
-        reader_->setGlobalCalibration();
-        undistort_ = Undistort::getUndistorterForFile(mainSettings.calib, mainSettings.gammaCalib,
-                                                      mainSettings.vignette);
-        imuCalibration.loadFromFile(mainSettings.imuCalibFile);
-        fullSystem_ = new FullSystem(linearizeOperation, imuCalibration, imuSettings);
-        fullSystem_->setGammaFunction(reader_->getPhotometricGamma());
-        fullSystem_->linearizeOperation = (playbackSpeed == 0);
-
-        outputWrapper_ = new IOWrap::AndroidOutput3DWrapper(wG[0], hG[0], false);
-        fullSystem_->outputWrapper.push_back(outputWrapper_);
-
-        frameId_ = start;
-    }
-
-    ~DSOSlamSystem() {
-        if (reader_) {
-            delete reader_;
-            reader_ = NULL;
-        }
-        if (fullSystem_) {
-            delete fullSystem_;
-            fullSystem_ = NULL;
-        }
-        if (outputWrapper_) {
-            delete outputWrapper_;
-            outputWrapper_ = NULL;
-        }
-        if (undistort_) {
-            delete undistort_;
-            undistort_ = NULL;
-        }
-    }
-
-    void onFrameByData(int width, int height, unsigned char *data) {
-        // Ref. https://github.com/JakobEngel/dso_ros/blob/master/src/main.cpp vidCb function
-        if (setting_fullResetRequested) {
-            std::vector<IOWrap::Output3DWrapper *> wraps = fullSystem_->outputWrapper;
-            delete fullSystem_;
-            for (IOWrap::Output3DWrapper *ow: wraps) ow->reset();
-            imuCalibration.loadFromFile(mainSettings.imuCalibFile);
-            fullSystem_ = new FullSystem(linearizeOperation, imuCalibration, imuSettings);
-            fullSystem_->linearizeOperation = false;
-            fullSystem_->outputWrapper = wraps;
-            if (undistort_->photometricUndist != 0)
-                fullSystem_->setGammaFunction(undistort_->photometricUndist->getG());
-            setting_fullResetRequested = false;
-        }
-
-        MinimalImageB minImg(width, height, data);
-        auto timestamp = std::chrono::system_clock::now().time_since_epoch().count();
-        ImageAndExposure *undistImg = undistort_->undistort<unsigned char>(
-                &minImg, 1.0f, timestamp / 1000);
-        fullSystem_->addActiveFrame(undistImg, frameId_, 0, 0);
-        frameId_++;
-        delete undistImg;
-    }
-
-    void onFrameByPath(std::string path) {
-        ImageAndExposure *img = reader_->getImage(frameId_);
-//        bool gtDataThere = reader_->loadGTData(gtFile);
-//        dmvio::GTData data;
-//        bool found = false;
-//        if (gtDataThere) {
-//            data = reader_->getGTData(frameId_, found);
-//        }
-
-        std::unique_ptr<dmvio::IMUData> imuData;
-        if (setting_useIMU) {
-            imuData = std::make_unique<dmvio::IMUData>(reader_->getIMUData(frameId_));
-        }
-
-        fullSystem_->addActiveFrame(img, frameId_, imuData.get(), 0);
-//                                    (gtDataThere && found) ? &data : 0);
-//        if (gtDataThere && found && !disableAllDisplay) {
-////                TODO add gt data viewer
-////                viewer->addGTCamPose(data.pose);
-//        }
-        delete img;
-        if (fullSystem_->initFailed || setting_fullResetRequested) {
-            if (frameId_ < 250 || setting_fullResetRequested) {
-                        printf("RESETTING!\n");
-                std::vector<IOWrap::Output3DWrapper *> wraps = fullSystem_->outputWrapper;
-                delete fullSystem_;
-                for (IOWrap::Output3DWrapper *ow: wraps) ow->reset();
-                fullSystem_ = new FullSystem(linearizeOperation, imuCalibration, imuSettings);
-                fullSystem_->setGammaFunction(reader_->getPhotometricGamma());
-                fullSystem_->outputWrapper = wraps;
-                setting_fullResetRequested = false;
-            }
-        }
-        if (fullSystem_->isLost) {
-                    printf("LOST!!\n");
-        }
-        frameId_++;
-    }
-
-    float fx() {
-        return fullSystem_->getCalibHessian().fxl();
-    }
-
-    float fy() {
-        return fullSystem_->getCalibHessian().fyl();
-    }
-
-    float cx() {
-        return fullSystem_->getCalibHessian().cxl();
-    }
-
-    float cy() {
-        return fullSystem_->getCalibHessian().cyl();
-    }
-
-    int width() {
-        return wG[0];
-    }
-
-    int height() {
-        return hG[0];
-    }
-
-    SE3 currentCameraPose() {
-        return outputWrapper_->currentCamPose();
-    }
-
-    int getKeyframeCount() {
-        return outputWrapper_->getKeyframeCount();
-    }
-
-    MinimalImageB3 *cloneKeyframeImage() {
-        return outputWrapper_->cloneKeyframeImage();
-    }
-
-    std::vector<std::pair<int, IOWrap::MyVertex *> > getVertices() {
-        return outputWrapper_->getVertices();
-    }
-
-private:
-    ImageFolderReader *reader_;
-    Undistort *undistort_;;
-    FullSystem *fullSystem_;
-    IOWrap::AndroidOutput3DWrapper *outputWrapper_;
-    int frameId_;
-};
+#include "DSOSlamSystem.h"
 
 static DSOSlamSystem *gSlamSystem = NULL;
 
@@ -234,41 +38,53 @@ Java_com_example_slamapp_TARNativeInterface_dsoInit(JNIEnv *env, jobject thiz, j
                 printf("argv[%i]: %s\n", i, pjc);
     }
     env->GetJavaVM(&gJvm);
-
-    auto settingsUtil = std::make_shared<dmvio::SettingsUtil>();
-    // Create Settings files.
-    imuSettings.registerArgs(*settingsUtil);
-    imuCalibration.registerArgs(*settingsUtil);
-    mainSettings.registerArgs(*settingsUtil);
-
-    // Dataset specific arguments. For other commandline arguments check out MainSettings::parseArgument,
-    // MainSettings::registerArgs, IMUSettings.h and IMUInitSettings.h
-    settingsUtil->registerArg("files", source);
-    settingsUtil->registerArg("start", start);
-    settingsUtil->registerArg("end", end);
-    settingsUtil->registerArg("imuFile", imuFile);
-    settingsUtil->registerArg("gtFile", gtFile);
-    settingsUtil->registerArg("sampleoutput", useSampleOutput);
-    settingsUtil->registerArg("reverse", reverse);
-    settingsUtil->registerArg("use16Bit", use16Bit);
-    settingsUtil->registerArg("maxPreloadImages", maxPreloadImages);
-
-    mainSettings.parseArguments(argc, argv, *settingsUtil);
-
-    if (mainSettings.imuCalibFile != "") {
-        imuCalibration.loadFromFile(mainSettings.imuCalibFile);
-    }
-
-    // Print settings to commandline and file.
-            printf("Settings:\n");
-    settingsUtil->printAllSettings(std::cout);
-    {
-        std::ofstream settingsStream;
-        settingsStream.open(imuSettings.resultsPrefix + "usedSettingsdso.txt");
-        settingsUtil->printAllSettings(settingsStream);
-    }
-
     gSlamSystem = new DSOSlamSystem();
+    gSlamSystem->Init(argc, argv);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_example_slamapp_TARNativeInterface_dsoPushImu(JNIEnv *env, jobject clazz,
+                                                       jbyteArray data) {
+    jbyte *jdataP = env->GetByteArrayElements(data, nullptr);
+
+    double gyroT;
+    memcpy(&gyroT, jdataP + 44, 8);
+    int16_t gyroX, gyroY, gyroZ;
+    memcpy(&gyroX, jdataP + 60, 2);
+    memcpy(&gyroY, jdataP + 64, 2);
+    memcpy(&gyroZ, jdataP + 68, 2);
+    double accT;
+    memcpy(&accT, jdataP + 72, 8);
+    int16_t accX, accY, accZ;
+    memcpy(&accX, jdataP + 88, 2);
+    memcpy(&accY, jdataP + 92, 2);
+    memcpy(&accZ, jdataP + 96, 2);
+    gSlamSystem->pushImu(
+            {(float) gyroX / LSBTORADS, (float) gyroY / LSBTORADS, (float) gyroZ / LSBTORADS},
+            gyroT,
+            {(float) accX / LSBTOMS2, (float) accY / LSBTOMS2, (float) accZ / LSBTOMS2},
+            accT);
+    env->ReleaseByteArrayElements(data, jdataP, JNI_FALSE);
+    return 0;
+}
+JNIEXPORT jint JNICALL
+Java_com_example_slamapp_TARNativeInterface_dsoPushImage(JNIEnv *env, jobject clazz,
+                                                         jbyteArray data) {
+    jbyte *jdataP = env->GetByteArrayElements(data, nullptr);
+    long long timestamp;
+    memcpy(&timestamp, jdataP + IMGDATALEN, 8);
+
+    if (timestamp == 0) {
+        LOGE("lalala in this frame image timestamp is %lld", timestamp);
+        return -1;
+    }
+    //convet image to show
+    cv::Mat image(HEIGHT, WIDTHTWICE, CV_8UC1, jdataP);
+    cv::Mat imgL = image(cv::Rect(0, 0, WIDTH, HEIGHT));
+    cv::Mat imgR = image(cv::Rect(WIDTH, 0, WIDTH, HEIGHT));
+    gSlamSystem->pushImg(imgL, timestamp);
+    env->ReleaseByteArrayElements(data, jdataP, JNI_FALSE);
+    return 0;
 }
 
 JNIEXPORT void JNICALL
@@ -280,27 +96,10 @@ Java_com_example_slamapp_TARNativeInterface_dsoRelease(JNIEnv *env, jobject thiz
     }
 }
 
-JNIEXPORT int JNICALL
-Java_com_example_slamapp_TARNativeInterface_dsoOnFrameByData(JNIEnv *env, jobject thiz, jint width,
-                                                             jint height, jbyteArray frameData,
-                                                             jint format) {
-
-    unsigned char grayData[640 * 480] = {0};
-    env->GetByteArrayRegion(frameData, 0, width * height, (jbyte *) grayData);
-    gSlamSystem->onFrameByData(width, height, grayData);
-    env->DeleteLocalRef(frameData);
-
-    return 0;
-}
-
-JNIEXPORT int JNICALL
-Java_com_example_slamapp_TARNativeInterface_dsoOnFrameByPath(JNIEnv *env, jobject thiz,
-                                                             jstring path) {
-    const char *imgFile = env->GetStringUTFChars(path, 0);
-    gSlamSystem->onFrameByPath(imgFile);
-    env->ReleaseStringUTFChars(path, imgFile);
-
-    return 0;
+JNIEXPORT void JNICALL
+Java_com_example_slamapp_TARNativeInterface_dsoProcess(JNIEnv *env, jobject thiz) {
+            printf("dsoProcess\n");
+        gSlamSystem->process();
 }
 
 JNIEXPORT jfloatArray JNICALL

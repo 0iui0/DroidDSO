@@ -7,9 +7,10 @@ package com.example.slamapp;
 public class TARNativeInterface {
     public static final String TAG = TARNativeInterface.class.getSimpleName();
     public static native void dsoInit(String[] args);
+    public static native int dsoPushImage(byte[] data);
+    public static native int dsoPushImu(byte[] data);
     public static native void dsoRelease();
-    public static native int dsoOnFrameByData(int width, int height, byte[] data, int format);
-    public static native int dsoOnFrameByPath(String path);
+    public static native void dsoProcess();
     public static native float[] dsoGetIntrinsics();
     public static native float[] dsoGetCurrentPose();
     public static native com.example.slamapp.DSOPointCloud dsoGetPointCloud();
