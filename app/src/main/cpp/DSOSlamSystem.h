@@ -3,6 +3,7 @@
 //
 #ifndef SLAM_APP_DSOSLAMSYSTEM_H
 #define SLAM_APP_DSOSLAMSYSTEM_H
+#include <boost/thread.hpp>
 
 #include "IOWrapper/Output3DWrapper.h"
 #include "IOWrapper/ImageDisplay.h"
@@ -43,13 +44,7 @@ using std::vector;
 #define PI 3.1415926535898f
 #define LSBTORADS GYRLSB / 180 * PI
 
-int start = 2;
 using namespace dso;
-dmvio::MainSettings mainSettings;
-dmvio::IMUCalibration imuCalibration;
-dmvio::IMUSettings imuSettings;
-dmvio::FrameSkippingSettings frameSkippingSettings;
-
 class DSOSlamSystem {
 public:
     DSOSlamSystem();
@@ -79,6 +74,10 @@ private:
     uint32_t exposureTimeUs_;
     // IMU interpolator will take care of creating "fake measurements" to synchronize the sensors by interpolating IMU data.
     double lastImgTimestamp_ = -1.0;
-
+    int start = 2;
+    dmvio::MainSettings mainSettings;
+    dmvio::IMUCalibration imuCalibration;
+    dmvio::IMUSettings imuSettings;
+    dmvio::FrameSkippingSettings frameSkippingSettings;
 };
 #endif //SLAM_APP_DSOSLAMSYSTEM_H

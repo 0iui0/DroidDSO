@@ -267,7 +267,7 @@ public class DSOActivity extends AppCompatActivity implements com.example.slamap
         public void run() {
             Process.setThreadPriority(mOSPriority);
             while (!mStopped) {
-                TARNativeInterface.dsoPushImu();
+//                TARNativeInterface.dsoPushImu();
             }
 
         }
@@ -287,7 +287,7 @@ public class DSOActivity extends AppCompatActivity implements com.example.slamap
         public void run() {
             Process.setThreadPriority(mOSPriority);
             while (!mStopped) {
-                TARNativeInterface.dsoPushImage();
+//                TARNativeInterface.dsoPushImage();
             }
 
         }

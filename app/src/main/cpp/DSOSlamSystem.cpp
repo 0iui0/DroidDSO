@@ -43,6 +43,7 @@ int DSOSlamSystem::Init(int argc, char **argv) {
     if (undistorter_->photometricUndist != nullptr) {
         fullSystem_->setGammaFunction(undistorter_->photometricUndist->getG());
     }
+    return 0;
 }
 
 void DSOSlamSystem::process() {

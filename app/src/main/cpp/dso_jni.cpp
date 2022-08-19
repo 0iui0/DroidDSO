@@ -1,12 +1,10 @@
 #include <string.h>
 #include <jni.h>
-#include <boost/thread.hpp>
 #include <locale.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
-#include <util/MainSettings.h>
 
 #include <iostream>
 #include <istream>
